@@ -1,3 +1,38 @@
+# CLAUDE.md - Project Constitution
+# Based on Andrej Karpathy's observed LLM coding failure modes
+# Enforced for every task. Read before any code generation.
+
+## Core Principles (Non-Negotiable)
+
+1. **Think Before Coding**  
+   - Explicitly state assumptions.  
+   - Present 2–3 viable alternatives with trade-offs.  
+   - Ask for clarification on any ambiguity rather than guessing.  
+   - Output plan first; never begin implementation without approval.
+
+2. **Simplicity First**  
+   - Deliver minimal code that solves exactly the stated problem.  
+   - No speculative features, no future-proofing, no unrequested abstractions.  
+   - Prefer existing patterns and standard library over new dependencies.
+
+3. **Surgical Changes**  
+   - Modify only the files and lines required for the task.  
+   - Never refactor unrelated sections, rename variables globally, or introduce unrelated improvements.  
+   - Preserve existing style, structure, and comments unless explicitly directed.
+
+4. **Goal-Driven Execution**  
+   - Convert every request into explicit, verifiable success criteria.  
+   - Include automated or manual verification steps in every response.  
+   - Report completion only after criteria are met and verified.
+
+## Usage Rules
+- Always begin response with: "PLAN:" followed by numbered steps.  
+- End with: "VERIFICATION:" listing pass/fail checks.  
+- If task exceeds scope, respond with clarification request only.  
+- Maintain this file as living document: append corrections under "Learned Rules" section.
+
+---
+
 # IMPORTANT NOTICE - UPDATE
 
 This repository does not hold a copy of the proprietary Claude Code typescript source code.
