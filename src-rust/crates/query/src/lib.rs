@@ -443,7 +443,7 @@ async fn execute_tool(
 /// - `system_prompt`        → `custom_system_prompt` (added to cacheable block)
 /// - `append_system_prompt` → `append_system_prompt` (added after boundary)
 fn build_system_prompt(config: &QueryConfig) -> SystemPrompt {
-    use cc_core::system_prompt::{OutputStyle, SystemPromptOptions};
+    use cc_core::system_prompt::SystemPromptOptions;
 
     let opts = SystemPromptOptions {
         custom_system_prompt: config.system_prompt.clone(),
@@ -478,6 +478,8 @@ mod tests {
             max_turns: 10,
             system_prompt: sys.map(String::from),
             append_system_prompt: append.map(String::from),
+            output_style: Default::default(),
+            working_directory: None,
             thinking_budget: None,
             temperature: None,
         }

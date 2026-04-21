@@ -500,6 +500,12 @@ mod tests {
 
     #[test]
     fn test_sdk_prefix_non_interactive_no_append() {
+        // Temporarily unset CLAUDE_CODE_REMOTE to test SDK detection
+        let _guard = {
+            let old = std::env::var("CLAUDE_CODE_REMOTE").ok();
+            std::env::remove_var("CLAUDE_CODE_REMOTE");
+            EnvGuard(("CLAUDE_CODE_REMOTE".to_string(), old))
+        };
         let prefix = SystemPromptPrefix::detect(true, false);
         assert_eq!(prefix, SystemPromptPrefix::Sdk);
         assert!(prefix.attribution_text().contains("Claude agent"));
@@ -507,9 +513,24 @@ mod tests {
 
     #[test]
     fn test_sdk_preset_prefix_non_interactive_with_append() {
+        // Temporarily unset CLAUDE_CODE_REMOTE to test SDK detection
+        let _guard = {
+            let old = std::env::var("CLAUDE_CODE_REMOTE").ok();
+            std::env::remove_var("CLAUDE_CODE_REMOTE");
+            EnvGuard(("CLAUDE_CODE_REMOTE".to_string(), old))
+        };
         let prefix = SystemPromptPrefix::detect(true, true);
         assert_eq!(prefix, SystemPromptPrefix::SdkPreset);
         assert!(prefix.attribution_text().contains("Claude Agent SDK"));
+    }
+
+    struct EnvGuard((String, Option<String>));
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(val) = &self.0.1 {
+                std::env::set_var(&self.0.0, val);
+            }
+        }
     }
 
     #[test]

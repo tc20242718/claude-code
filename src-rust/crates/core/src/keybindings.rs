@@ -1,7 +1,7 @@
 //! Configurable keyboard shortcuts system
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 
 /// All keybinding contexts
@@ -176,7 +176,7 @@ struct JsonKeybindingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JsonKeybindingBlock {
     context: String,
-    bindings: HashMap<String, Option<String>>,
+    bindings: IndexMap<String, Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

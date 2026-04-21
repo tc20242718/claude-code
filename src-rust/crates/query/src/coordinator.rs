@@ -1,7 +1,5 @@
 //! Coordinator mode: multi-worker agent orchestration
 
-use crate::*;
-
 pub const COORDINATOR_ENV_VAR: &str = "CLAUDE_CODE_COORDINATOR_MODE";
 
 pub fn is_coordinator_mode() -> bool {
