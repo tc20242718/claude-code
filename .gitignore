@@ -1,0 +1,22 @@
+# Rust build artifacts
+target/
+Cargo.lock
+*.rlib
+*.rmeta
+
+# Node artifacts
+node_modules/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.env
+.env.local
