@@ -1578,6 +1578,7 @@ pub mod memdir;
 pub mod oauth_config;
 pub mod migrations;
 pub mod output_styles;
+pub mod error_handler;
 
 #[cfg(test)]
 mod tests {
