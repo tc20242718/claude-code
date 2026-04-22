@@ -5,6 +5,7 @@ from connector_base import LocalConnector, CloudConnector, AgentType
 class TestLocalConnector(unittest.TestCase):
     def setUp(self):
         self.connector = LocalConnector("test_local_agent")
+        self.connector.health_check()
 
     def test_health_check(self):
         self.assertTrue(self.connector.health_check())
