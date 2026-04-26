@@ -342,6 +342,101 @@ for bin in $AGENT_BINS; do
   echo "  exit=${PIPESTATUS[0]} (124 = timed out)"
 done
 
+# Gap 4 — Sentinel disambiguation.
+# "Sentinel" is ambiguous: it could be SentinelOne EDR, an Apple endpoint
+# protection, a plugin, or a custom user script. This section forces one
+# of [SentinelOne / Apple Endpoint Security client / not found / custom
+# user script] by checking the surfaces each would register on.
+say "Gap 4 — Sentinel disambiguation"
+
+echo "-- systemextensionsctl list (system extensions registered with the kernel)"
+if have systemextensionsctl; then
+  tmo 5 systemextensionsctl list 2>&1 | cap 50000
+fi
+
+echo "-- pluginkit -mAvvv | (filter to security/endpoint relevant)"
+if have pluginkit; then
+  tmo 5 pluginkit -mAvvv 2>&1 \
+    | grep -iE 'sentinel|crowdstrike|sophos|carbonblack|jamf|endpoint|security' \
+    | cap 30000 \
+    || echo "(no matching pluginkit entries)"
+fi
+
+echo "-- /Applications and /Library matches for Sentinel-named bundles"
+ls -ld /Applications/SentinelOne* 2>/dev/null || true
+ls -ld /Applications/Sentinel* 2>/dev/null || true
+ls -ld "/Library/Sentinel"* 2>/dev/null || true
+ls -ld "/Library/Application Support/SentinelOne" 2>/dev/null || true
+ls -ld "/Library/Application Support/Sentinel"* 2>/dev/null || true
+
+echo "-- launchctl list filtered to known EDR / endpoint vendor names"
+if have launchctl; then
+  tmo 5 launchctl list 2>&1 \
+    | grep -iE 'sentinel|sentinelone|endpoint|crowdstrike|sophos|jamf|carbonblack|falcon' \
+    | cap 20000 \
+    || echo "(no matching launchctl entries — Sentinel not running as managed service for this user)"
+fi
+
+echo "-- MDM enrollment posture (profiles list / show -type enrollment)"
+if have profiles; then
+  tmo 5 profiles list 2>&1 | cap 30000
+  echo "-- profiles show -type enrollment"
+  tmo 5 profiles show -type enrollment 2>&1 | cap 10000
+fi
+
+echo "-- Sentinel disambiguation summary heuristic"
+# Best-effort classification based on what we just saw. This is a hint only;
+# the user/analyst confirms by reading the raw evidence above.
+sentinel_class="unknown"
+if ls -d /Applications/SentinelOne* >/dev/null 2>&1; then
+  sentinel_class="SentinelOne EDR (vendor app present in /Applications)"
+elif systemextensionsctl list 2>/dev/null | grep -qi sentinel; then
+  sentinel_class="System extension named 'sentinel' is registered (kind unclear — inspect bundle ID above)"
+elif command -v sentinel >/dev/null 2>&1; then
+  sentinel_class="A 'sentinel' binary is on PATH but no SentinelOne app or system extension found — likely custom user script (verify with Gap 1 binary identity above)"
+else
+  sentinel_class="Not found — no SentinelOne, no system extension, no binary on PATH. v3.2/v3.3 'Sentinel' references are unsupported."
+fi
+echo "Sentinel-class: $sentinel_class"
+
+# Gap 5 — Endpoint Security client registrations.
+# Cross-checks Gap 4 by hunting for *.systemextension bundles in the standard
+# install locations. ES clients live here regardless of vendor; their
+# presence answers "is anything actually using the Endpoint Security API?"
+say "Gap 5 — Endpoint Security registrations (*.systemextension bundles)"
+echo "-- /Library/SystemExtensions"
+if [ -d /Library/SystemExtensions ]; then
+  find /Library/SystemExtensions -maxdepth 4 -type d -name '*.systemextension' 2>&1 \
+    | permfilter | cap 20000
+else
+  echo "(no /Library/SystemExtensions directory)"
+fi
+echo "-- /Applications/*/Contents/Library/SystemExtensions"
+find /Applications -maxdepth 5 -path '*/Contents/Library/SystemExtensions/*.systemextension' 2>&1 \
+  | permfilter | cap 20000 \
+  || echo "(none found)"
+
+# Gap 6 — Time Machine destination encryption.
+# v3.2/v3.3 implied that Time Machine is in use; the actual question is
+# whether the destination volume is encrypted (so backups don't leak the
+# secrets the rest of the host protects).
+say "Gap 6 — Time Machine destination encryption"
+if have tmutil; then
+  echo "-- tmutil destinationinfo -X (raw plist)"
+  tmo 5 tmutil destinationinfo -X 2>&1 | cap 20000
+  echo "-- tmutil destinationinfo (parsed Encryption / Kind / Name lines)"
+  tmo 5 tmutil destinationinfo 2>&1 \
+    | grep -iE 'name|kind|encryption|mountpoint|id ' \
+    | cap 5000 \
+    || echo "(tmutil produced no Encryption line — destination may be unencrypted, missing, or unconfigured)"
+fi
+echo "-- diskutil apfs list (cross-check: is the destination volume itself encrypted?)"
+if have diskutil; then
+  tmo 8 diskutil apfs list 2>&1 \
+    | grep -E 'Volume|Encrypted|FileVault|Mount Point|APFS Volume Disk' \
+    | cap 20000
+fi
+
 say "DONE (audit body)"
 
 } 2>&1 | tee "$RAW"
