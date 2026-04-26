@@ -16,7 +16,12 @@ umask 077
 TS="$(date +%Y%m%d-%H%M%S)"
 OUT="$HOME/Desktop/mac-audit-$TS.txt"
 RAW="$(mktemp -t mac-audit-raw.XXXXXX)"
-trap 'rm -f "$RAW"' EXIT
+# Pre-create ISO_HOME at the top so cleanup is a single parent-level trap.
+# Defining a competing trap inside the brace-group on the LHS of the tee
+# pipeline runs in a subshell, which would delete RAW when the subshell
+# exits — before the parent's redaction pass reads it.
+ISO_HOME="$(mktemp -d -t mac-audit-iso-home.XXXXXX)"
+trap 'rm -f "$RAW"; rm -rf "$ISO_HOME"' EXIT
 
 # ---------- helpers ----------
 
@@ -76,8 +81,8 @@ permfilter() {
 redact() {
   sed -E \
     -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._\-]+/\1<REDACTED-BEARER>/g' \
-    -e 's/sk-[A-Za-z0-9_\-]{20,}/<REDACTED-OPENAI-KEY>/g' \
     -e 's/sk-ant-[A-Za-z0-9_\-]{20,}/<REDACTED-ANTHROPIC-KEY>/g' \
+    -e 's/sk-[A-Za-z0-9_\-]{20,}/<REDACTED-OPENAI-KEY>/g' \
     -e 's/ghp_[A-Za-z0-9]{20,}/<REDACTED-GITHUB-TOKEN>/g' \
     -e 's/gho_[A-Za-z0-9]{20,}/<REDACTED-GITHUB-OAUTH>/g' \
     -e 's/xox[abprs]-[A-Za-z0-9\-]+/<REDACTED-SLACK-TOKEN>/g' \
@@ -85,7 +90,9 @@ redact() {
     -e 's/ASIA[0-9A-Z]{16}/<REDACTED-AWS-STS-KEY>/g' \
     -e 's/AIza[0-9A-Za-z_\-]{30,}/<REDACTED-GOOGLE-API-KEY>/g' \
     -e 's/(eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.)[A-Za-z0-9_\-]{10,}/\1<REDACTED-JWT-SIG>/g' \
-    -e 's/([Tt]oken|[Ss]ecret|[Pp]assword|[Aa]pi[_-]?[Kk]ey|[Aa]uth)([[:space:]]*[:=][[:space:]]*)[^[:space:]"'\'']{6,}/\1\2<REDACTED>/g'
+    -e 's/("?)([Tt]oken|[Ss]ecret|[Pp]assword|[Aa]pi[_-]?[Kk]ey|[Aa]uth)("?)([[:space:]]*[:=][[:space:]]*)"[^"]{6,}"/\1\2\3\4<REDACTED>/g' \
+    -e 's/('\''?)([Tt]oken|[Ss]ecret|[Pp]assword|[Aa]pi[_-]?[Kk]ey|[Aa]uth)('\''?)([[:space:]]*[:=][[:space:]]*)'\''[^'\'']{6,}'\''/\1\2\3\4<REDACTED>/g' \
+    -e 's/([Tt]oken|[Ss]ecret|[Pp]assword|[Aa]pi[_-]?[Kk]ey|[Aa]uth)([[:space:]]*[:=][[:space:]]*)[^[:space:]"'\'',;]{6,}/\1\2<REDACTED>/g'
 }
 
 # ---------- audit body ----------
@@ -329,17 +336,18 @@ fi
 # itself, with HOME redirected so help text cannot mutate real config and a
 # 3-second cap so a misbehaving binary cannot hang the audit.
 say "Gap 3 — Command flag verification (--help / --version, isolated HOME, 3s cap)"
-ISO_HOME="$(mktemp -d -t mac-audit-iso-home.XXXXXX)"
-trap 'rm -f "$RAW"; rm -rf "$ISO_HOME"' EXIT
+# ISO_HOME is created at the top of the script; cleanup is the parent's job.
 echo "isolated HOME: $ISO_HOME"
 for bin in $AGENT_BINS; do
   command -v "$bin" >/dev/null 2>&1 || continue
   echo "--- $bin --version"
   HOME="$ISO_HOME" tmo 3 "$bin" --version 2>&1 | cap 4000 | sed 's/^/  /'
-  echo "  exit=${PIPESTATUS[0]} (124 = timed out)"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" = "124" ] && echo "  exit=$rc (TIMED OUT)" || echo "  exit=$rc"
   echo "--- $bin --help"
   HOME="$ISO_HOME" tmo 3 "$bin" --help 2>&1 | cap 8000 | sed 's/^/  /'
-  echo "  exit=${PIPESTATUS[0]} (124 = timed out)"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" = "124" ] && echo "  exit=$rc (TIMED OUT)" || echo "  exit=$rc"
 done
 
 # Gap 4 — Sentinel disambiguation.
