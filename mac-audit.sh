@@ -215,6 +215,133 @@ for d in "$HOME/.openclaw" "$HOME/.ollama" "$HOME/.nanoclaw" "$HOME/.codex" "$HO
   find "$d" -type f -mtime -7 2>/dev/null | head -30
 done
 
+# ---------- gap sections (chunks 2+) ----------
+
+# Gap 1 — Binary identity for the named agents.
+# Distinguishes Mach-O binary vs shell script vs symlink vs absent. Records
+# signing identity, team ID, entitlements, hash. Anything claimed by the
+# v3.2/v3.3 guides as "an installed agent" must show up here with evidence
+# or the claim is refuted.
+say "Gap 1 — Binary identity for named agents"
+AGENT_BINS="openclaw nanoclaw nemoclaw sentinel sentinelctl claw codex ollama claude"
+for bin in $AGENT_BINS; do
+  echo "--- $bin"
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "[ABSENT: $bin not on PATH]"
+    # Still scan a few common install dirs in case it's installed but unlinked.
+    for dir in /usr/local/bin /opt/homebrew/bin /opt/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+      if [ -e "$dir/$bin" ]; then
+        echo "[NOTE: $dir/$bin exists but not on PATH]"
+      fi
+    done
+    continue
+  fi
+  # All resolved paths (which -a shows shadowed copies; matters for PATH-poisoning).
+  echo "which -a:"
+  which -a "$bin" 2>/dev/null | sed 's/^/  /'
+  resolved="$(command -v "$bin")"
+  # Resolve symlinks fully so signing/hashing applies to the real target.
+  if command -v readlink >/dev/null 2>&1; then
+    real="$(readlink -f "$resolved" 2>/dev/null || echo "$resolved")"
+  else
+    real="$resolved"
+  fi
+  echo "resolved: $resolved"
+  echo "real:     $real"
+  if [ -e "$real" ]; then
+    file "$real" 2>/dev/null | sed 's/^/  /'
+    stat -f 'mode=%Sp uid=%Su gid=%Sg size=%z mtime=%Sm' "$real" 2>/dev/null \
+      || stat "$real" 2>/dev/null
+    if command -v shasum >/dev/null 2>&1; then
+      shasum -a 256 "$real" 2>/dev/null | sed 's/^/  sha256: /'
+    fi
+    # Code signing — only meaningful for Mach-O. Will print "not signed at all"
+    # for shell scripts; that's diagnostic, not noise.
+    echo "codesign:"
+    codesign -dvvv --entitlements - -- "$real" 2>&1 | cap 8000 | sed 's/^/  /'
+  else
+    echo "[STALE: $resolved is on PATH but the file doesn't exist]"
+  fi
+done
+
+# Gap 2 — Literal path-existence loop for v3.2/v3.3 guide claims.
+# Iterates every path the guides assert. Each row is present/absent, with
+# size and mtime when present. Output of this section is the input to the
+# claim-vs-evidence table that gates v3.4.
+say "Gap 2 — Path-claim verification (v3.2 / v3.3 asserted paths)"
+GUIDE_PATHS=(
+  "$HOME/Library/Containers/com.openai.codex"
+  "$HOME/Library/Preferences/com.openclaw.plist"
+  "$HOME/Library/Preferences/com.nanoclaw.plist"
+  "$HOME/Library/Preferences/com.sentinel.plist"
+  "$HOME/Library/Application Support/OpenClaw"
+  "$HOME/Library/Application Support/NanoClaw"
+  "$HOME/Library/Application Support/Sentinel"
+  "$HOME/Library/Application Support/Codex"
+  "$HOME/Library/Application Support/Claude"
+  "$HOME/Library/Group Containers"
+  "/Library/Application Support/Sentinel"
+  "/Library/Application Support/OpenClaw"
+  "/Library/Application Support/NanoClaw"
+  "/Applications/OpenClaw.app"
+  "/Applications/NanoClaw.app"
+  "/Applications/NemoClaw.app"
+  "/Applications/Sentinel.app"
+  "/Applications/SentinelOne.app"
+  "/Applications/Codex.app"
+  "/Applications/Claude.app"
+  "$HOME/.openclaw/openclaw.json"
+  "$HOME/.openclaw/config.json"
+  "$HOME/.nanoclaw/config.json"
+  "$HOME/.codex/config.toml"
+  "$HOME/.claude/settings.json"
+  "$HOME/.claude/CLAUDE.md"
+  "$HOME/.claude/active-work.md"
+)
+for p in "${GUIDE_PATHS[@]}"; do
+  if [ -e "$p" ]; then
+    if [ -d "$p" ]; then
+      kind="dir"
+    elif [ -L "$p" ]; then
+      kind="symlink"
+    else
+      kind="file"
+    fi
+    sz="$(stat -f '%z' "$p" 2>/dev/null || echo '?')"
+    mt="$(stat -f '%Sm' "$p" 2>/dev/null || echo '?')"
+    printf 'PRESENT  %-7s  size=%s  mtime=%s  %s\n' "$kind" "$sz" "$mt" "$p"
+  else
+    # Group Containers is a parent dir; if absent, skip noisily but match its
+    # children pattern when present. Handled below for that one row.
+    printf 'absent                                          %s\n' "$p"
+  fi
+done
+# Group Containers: if the parent exists, list any *claw* match.
+if [ -d "$HOME/Library/Group Containers" ]; then
+  echo "-- Group Containers / *claw* matches:"
+  find "$HOME/Library/Group Containers" -maxdepth 1 -iname '*claw*' 2>/dev/null \
+    | head -20 | sed 's/^/  /' || echo "  (none)"
+fi
+
+# Gap 3 — Command-flag verification with isolated HOME.
+# The v3.2/v3.3 guides claim flags like --preserve-channels and a
+# `verify-channels` subcommand. The only honest check is to ask the binary
+# itself, with HOME redirected so help text cannot mutate real config and a
+# 3-second cap so a misbehaving binary cannot hang the audit.
+say "Gap 3 — Command flag verification (--help / --version, isolated HOME, 3s cap)"
+ISO_HOME="$(mktemp -d -t mac-audit-iso-home.XXXXXX)"
+trap 'rm -f "$RAW"; rm -rf "$ISO_HOME"' EXIT
+echo "isolated HOME: $ISO_HOME"
+for bin in $AGENT_BINS; do
+  command -v "$bin" >/dev/null 2>&1 || continue
+  echo "--- $bin --version"
+  HOME="$ISO_HOME" tmo 3 "$bin" --version 2>&1 | cap 4000 | sed 's/^/  /'
+  echo "  exit=${PIPESTATUS[0]} (124 = timed out)"
+  echo "--- $bin --help"
+  HOME="$ISO_HOME" tmo 3 "$bin" --help 2>&1 | cap 8000 | sed 's/^/  /'
+  echo "  exit=${PIPESTATUS[0]} (124 = timed out)"
+done
+
 say "DONE (audit body)"
 
 } 2>&1 | tee "$RAW"
