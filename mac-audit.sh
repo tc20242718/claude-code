@@ -437,6 +437,98 @@ if have diskutil; then
     | cap 20000
 fi
 
+# Gap 7 — Process reality + LaunchAgent state.
+# A LaunchAgent plist that "should" run something is not the same as a
+# running process. Cross-check: ps for live agent processes; launchctl print
+# for the user-domain and system-domain service state. The PIDs captured
+# here feed Gap 8 (established connections).
+say "Gap 7 — Process reality + LaunchAgent state"
+AGENT_PATTERN='openclaw|nanoclaw|nemoclaw|sentinel|sentinelone|codex|ollama|claude|n8n'
+
+echo "-- ps (agent-relevant processes)"
+# Header preserved (NR==1) so columns are readable in the report.
+ps -Ao pid,user,%cpu,%mem,lstart,command 2>/dev/null \
+  | awk -v pat="$AGENT_PATTERN" 'NR==1 || tolower($0) ~ pat' \
+  | cap 30000
+
+# Capture PIDs for Gap 8. Skip header line. Column 1 is PID. Filter by the
+# command field (column 11..end) so we don't match a username that happens
+# to contain "claude".
+AGENT_PIDS="$(ps -Ao pid,command 2>/dev/null \
+  | awk -v pat="$AGENT_PATTERN" 'NR>1 && tolower($0) ~ pat {print $1}' \
+  | tr '\n' ' ')"
+echo "-- captured agent PIDs for Gap 8: ${AGENT_PIDS:-<none>}"
+
+echo "-- launchctl print gui/<uid> (user-domain services, agent-filtered)"
+if have launchctl; then
+  tmo 5 launchctl print "gui/$(id -u)" 2>&1 \
+    | grep -iE "$AGENT_PATTERN|state =|program =|path =" \
+    | cap 30000 \
+    || echo "(no matches in user domain)"
+fi
+
+echo "-- launchctl print system (system-domain services, agent-filtered)"
+if have launchctl; then
+  tmo 5 launchctl print system 2>&1 \
+    | grep -iE "$AGENT_PATTERN|state =|program =|path =" \
+    | cap 30000 \
+    || echo "(no matches in system domain)"
+fi
+
+# Gap 8 — Established connections snapshot (NOT a continuous capture).
+# Two single-shot views: lsof for agent PIDs (precise), and one nettop
+# sample for cross-reference. No tcpdump, no fs_usage, nothing long-lived.
+say "Gap 8 — Established outbound connections (snapshot)"
+echo "-- lsof -iTCP -sTCP:ESTABLISHED filtered to agent PIDs"
+if [ -n "$AGENT_PIDS" ]; then
+  # Build -p PID,PID,PID. lsof accepts multiple via comma.
+  lsof_pids="$(echo "$AGENT_PIDS" | tr ' ' ',' | sed 's/,$//;s/^,//')"
+  if [ -n "$lsof_pids" ]; then
+    tmo 5 lsof -nP -iTCP -sTCP:ESTABLISHED -p "$lsof_pids" 2>&1 | cap 30000 \
+      || echo "(lsof returned no rows for these PIDs)"
+  fi
+else
+  echo "(no agent PIDs captured in Gap 7; nothing to snapshot)"
+fi
+
+echo "-- nettop single sample (-P -L 1 -x) filtered to agent names"
+if have nettop; then
+  # nettop without -k can be wide; -x is non-interactive, -L 1 is one snapshot.
+  tmo 5 nettop -P -L 1 -x 2>&1 \
+    | awk -v pat="$AGENT_PATTERN" 'NR==1 || tolower($0) ~ pat' \
+    | cap 30000 \
+    || echo "(nettop returned no agent rows)"
+fi
+
+# Gap 9 — TCC permission analysis (gated on FDA self-test from chunk 1).
+# Scope-bounded by plan: we read TCC permission GRANTS only — no message,
+# mail, or browser-history bodies, even with FDA. Output answers "what does
+# the user think they've granted to which agent?"
+say "Gap 9 — TCC permission grants for agent bundles (FDA-gated)"
+if [ "${HAS_FDA:-0}" = "1" ] && command -v sqlite3 >/dev/null 2>&1; then
+  TCC_USER="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+  TCC_SYS="/Library/Application Support/com.apple.TCC/TCC.db"
+  TCC_PATTERN='openclaw|nanoclaw|nemoclaw|sentinel|codex|ollama|claude|electron|terminal|iterm|n8n'
+  for db in "$TCC_USER" "$TCC_SYS"; do
+    [ -r "$db" ] || { echo "-- $db : not readable, skipping"; continue; }
+    echo "-- $db"
+    # Schema varies across macOS releases. Try the modern columns first;
+    # fall back to a permissive SELECT * if the named columns aren't there.
+    sqlite3 -separator '|' "$db" \
+      "select service, client, client_type, auth_value, auth_reason, last_modified from access;" 2>/dev/null \
+      | awk -v pat="$TCC_PATTERN" 'tolower($0) ~ pat' \
+      | cap 40000 \
+      || sqlite3 "$db" 'select * from access;' 2>/dev/null \
+        | awk -v pat="$TCC_PATTERN" 'tolower($0) ~ pat' \
+        | cap 40000
+  done
+else
+  echo "Skipped: HAS_FDA=$HAS_FDA (no Full Disk Access). To enable, grant"
+  echo "Full Disk Access to the terminal app you're running this script in,"
+  echo "via System Settings -> Privacy & Security -> Full Disk Access."
+  echo "(This audit will not request the grant. The choice is yours.)"
+fi
+
 say "DONE (audit body)"
 
 } 2>&1 | tee "$RAW"
