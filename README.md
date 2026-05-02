@@ -1,3 +1,12 @@
+## Governance
+
+| Document | Purpose | Deployment |
+|----------|---------|------------|
+| [`CLAUDE.md`](./CLAUDE.md) | Coding constitution — mode detection, PLAN/VERIFY format, surgical change rules | Claude Code CLI (auto-loaded) |
+| [`.claude/prompts/strategic-advisor.md`](./.claude/prompts/strategic-advisor.md) | Strategic advisor framework — Executive Summary format, mental models, scenario analysis | Claude.ai Project instructions |
+
+---
+
 # IMPORTANT NOTICE - UPDATE
 
 This repository does not hold a copy of the proprietary Claude Code typescript source code.
